@@ -34,6 +34,10 @@ class GraphRecommender(Recommender):
         pass
 
     def test(self):
+
+        # hy
+
+        
         def process_bar(num, total):
             rate = float(num) / total
             ratenum = int(50 * rate)
