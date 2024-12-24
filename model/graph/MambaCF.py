@@ -22,8 +22,8 @@ class MambaCF(GraphRecommender):
     def __init__(self, conf, training_set, test_set):
         super(MambaCF, self).__init__(conf, training_set, test_set)
         _args = OptionConf(self.config['MambaCF'])
-        self.n_layers = int(_args['-n_layer'])
-        self.model = Mamba_encoder(self.data, self.emb_size, self.n_layers, self.bidirection, self.pos_enc, self.gcn)
+        # self.n_layers = int(_args['-n_layer'])
+        self.model = Mamba_encoder(self.data, self.emb_size, self.m_layers, self.bidirection, self.pos_enc, self.gcn)
         if args.loss in ['ssm', 'simce']:
             self.maxEpoch = 50
 
