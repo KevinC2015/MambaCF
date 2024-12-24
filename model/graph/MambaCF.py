@@ -1,146 +1,198 @@
-# encoding: utf-8
-# cython: linetrace=True
-# cython: cdivision=True
-# cython: boundscheck=False
-# cython: wraparound=False
-# cython: language_level=3
-
-
-cimport numpy as np
+import torch
+import torch.nn as nn
+from base.graph_recommender import GraphRecommender
+from util.conf import OptionConf
+from util.sampler import next_batch_pairwise
+from base.torch_interface import TorchGraphInterface
+from util.loss_torch import bpr_loss,l2_reg_loss, bpr_k_loss, ccl_loss, directau_loss,  simce_loss, ssm_loss
+import torch.nn.functional as F
 import numpy as np
-np.import_array()
+import scipy.sparse as sp
 
-ctypedef np.int64_t int64_t
-ctypedef np.uint32_t uint32_t
+from util.args import get_params
+import time
+from scipy.sparse.linalg import svds
+from model.graph.walks import get_random_walks
+from mamba_ssm import Mamba
+from torch_scatter import scatter_mean, scatter_sum
+
+args = get_params()
+
+class MambaCF(GraphRecommender):
+    def __init__(self, conf, training_set, test_set):
+        super(MambaCF, self).__init__(conf, training_set, test_set)
+        _args = OptionConf(self.config['MambaCF'])
+        self.n_layers = int(_args['-n_layer'])
+        self.model = Mamba_encoder(self.data, self.emb_size, self.n_layers, self.bidirection, self.pos_enc, self.gcn)
+        if args.loss in ['ssm', 'simce']:
+            self.maxEpoch = 50
+
+    def train(self):
+        model = self.model.cuda()
+        optimizer = torch.optim.Adam(model.parameters(), lr=self.lRate)
+        for epoch in range(self.maxEpoch):
+            t0 = time.time()
+
+            walk_node, _ = get_random_walks(self.model.adj, self.walk_length, sample_rate=self.sample_rate)
+            walk_node = torch.from_numpy(walk_node).cuda()
+        
+            for n, batch in enumerate(next_batch_pairwise(self.data, self.batch_size)):
+
+                user_idx, pos_idx, neg_idx = batch
+                
+                rec_user_emb, rec_item_emb = model(walk_node)
+                user_emb, pos_item_emb, neg_item_emb = rec_user_emb[user_idx], rec_item_emb[pos_idx], rec_item_emb[neg_idx]
+
+                reg_loss = l2_reg_loss(self.reg, user_emb,pos_item_emb,neg_item_emb)/self.batch_size
 
 
-cdef enum:
-    # Max value for our rand_r replacement (near the bottom).
-    # We don't use RAND_MAX because it's different across platforms and
-    # particularly tiny on Windows/MSVC.
-    RAND_R_MAX = 0x7FFFFFFF
+                if args.loss == 'bpr':
+                    rec_loss = bpr_loss(user_emb, pos_item_emb, neg_item_emb)
+                elif args.loss == 'ssm':
+                    rec_loss = ssm_loss(user_emb, pos_item_emb, neg_item_emb)
+                elif args.loss == 'simce':
+                    rec_loss = simce_loss(user_emb, pos_item_emb, neg_item_emb, margin=args.margin)
+                    
+                    
+                
+                batch_loss = rec_loss + reg_loss 
+                # Backward and optimize
+                optimizer.zero_grad()
+                batch_loss.backward()
+                optimizer.step()
+                # if n % 100==0 and n>0:
+                #     print('training:', epoch + 1, 'batch', n, 'batch_loss:', batch_loss.item())
+            with torch.no_grad():
+                self.user_emb, self.item_emb = model(walk_node)
+            if epoch % 1 == 0:
+                self.fast_evaluation(epoch)
+            print('each epoch: {} seconds'.format(time.time() - t0))
+        self.user_emb, self.item_emb = self.best_user_emb, self.best_item_emb
 
-cdef inline uint32_t our_rand_r(uint32_t* seed) nogil:
-    seed[0] ^= <uint32_t>(seed[0] << 13)
-    seed[0] ^= <uint32_t>(seed[0] >> 17)
-    seed[0] ^= <uint32_t>(seed[0] << 5)
-
-    return seed[0] % (<uint32_t>RAND_R_MAX + 1)
-
-cdef inline uint32_t rand_int(uint32_t end, uint32_t* random_state) nogil:
-    """Generate a random integer in [0; end)."""
-    return our_rand_r(random_state) % end
-
-cdef inline int fmin(int x, int y) nogil:
-    if x < y:
-        return x
-    return y
 
 
-def get_random_walks(
-    csr_matrix,
-    int walk_length,
-    double sample_rate=1.0,
-    int pad_value=-1,
-    bint backtracking=False,
-    bint strict=False,
-    int window_size=0,
-    object rng=None
-):
-    if rng is None:
-        rng = np.random.RandomState(0)
+    def save(self):
+        with torch.no_grad():
 
-    cdef:
-        int[:] indices = csr_matrix.indices
-        int[:] indptr = csr_matrix.indptr
-        int num_nodes = csr_matrix.shape[0]
-        int num_active_nodes = num_nodes
+            # here is the evaluate
+            walk_node, _ = get_random_walks(self.model.adj, self.test_walk_length, sample_rate=self.test_sample_rate)
+            walk_node = torch.from_numpy(walk_node).cuda()
 
-        int[:] neighbors = np.empty(num_nodes, dtype=np.int32)
 
-        int i, j, k, node_index, choice_index, next_index, prev_index
-        int edge_index, repeated_index
-        int index, neighbors_i
-        int walk_index = 0
+            
+            self.best_user_emb, self.best_item_emb = self.model.forward(walk_node)
 
-        int[:] degrees = np.asarray(csr_matrix.sum(axis=-1), dtype=np.int32).flatten()
-        int degree
+    def predict(self, u):
+        u = self.data.get_user_id(u)
+        user_emb = self.user_emb[u]
+        item_emb = self.item_emb
+        if args.loss in ['directau']:
+            user_emb = F.normalize(user_emb, dim=-1)
+            item_emb = F.normalize(item_emb, dim=-1)
+            
+        score = torch.matmul(user_emb, item_emb.transpose(0, 1))
+        return score.cpu().numpy()
 
-        bint use_node_mask = sample_rate < 1.0
-        np.uint8_t[:] active_nodes
 
-        uint32_t rand_r_state_seed = rng.randint(0, RAND_R_MAX)
-        uint32_t* rand_r_state = &rand_r_state_seed
+class Mamba_encoder(nn.Module):
+    def __init__(self, data, emb_size, n_layers, bidirection=False, pos_enc=False, gcn=False, d_state=32, d_conv=8, expand=1, pos_emb=None):
+        super(Mamba_encoder, self).__init__()
+        self.data = data
+        self.latent_size = emb_size
+        self.layers = n_layers
+        self.norm_adj = data.norm_adj    
+        self.embedding_dict = self._init_model()
+        self.sparse_norm_adj = TorchGraphInterface.convert_sparse_mat_to_tensor(self.norm_adj).cuda()
+        self.inter_matrix = data.ui_rat
 
-    if use_node_mask:
-        active_nodes = (rng.rand(num_nodes) < sample_rate).astype(np.uint8)
-        num_active_nodes = np.asarray(active_nodes).sum()
+        self.adj = data.ui_adj
+        self.bidirect = bidirection
+        self.pos_enc = pos_enc
+        self.gcn=gcn
 
-    cdef int64_t[:, ::1] walk_node_index = np.full([num_active_nodes, walk_length], pad_value, dtype=np.int64)
-    cdef int64_t[:, ::1] walk_edge_index = np.full([num_active_nodes, walk_length], pad_value, dtype=np.int64)
-    cdef np.uint8_t[:, :, ::1] walk_node_id_encoding
-    cdef np.uint8_t[:, :, ::1] walk_node_adj_encoding
-    cdef int o, s, adj_prev_node_index
-    if window_size > 0:
-        walk_node_id_encoding = np.zeros([num_active_nodes, walk_length, window_size], dtype=np.uint8)
-        walk_node_adj_encoding = np.zeros([num_active_nodes, walk_length, window_size - 1], dtype=np.uint8)
+        if self.pos_enc:
+            self.pos_emb = self.get_position_emb()
 
-    with nogil:
-        for i in range(num_nodes):
-            if use_node_mask and not active_nodes[i]:
-                continue
-            node_index = i
-            prev_index = -1
-            walk_node_index[walk_index, 0] = node_index
-            for j in range(walk_length - 1):
-                degree = degrees[node_index]
-                if degree == 0: # stop walk
-                    break
-                edge_index = indptr[node_index]
-                neighbors_i = 0
-                repeated_index = -1
-                for k in range(indptr[node_index], indptr[node_index + 1]):
-                    index = indices[k]
-                    if backtracking or (index != prev_index):
-                        neighbors[neighbors_i] = index
-                        neighbors_i += 1
-                    else:
-                        degree -= 1
-                        repeated_index = neighbors_i
-                if degree == 0 and strict: # stop walk
-                    break
+        
 
-                if degree == 0:
-                    next_index = prev_index
-                else:
-                    choice_index = rand_int(<uint32_t> degree, rand_r_state)
+        self.seq_layers = torch.nn.ModuleList()
+        if self.bidirect:
+            self.seq_backward_layers = torch.nn.ModuleList()
 
-                    next_index = neighbors[choice_index]
-                    edge_index += choice_index
-                    if (repeated_index != -1) and (choice_index >= repeated_index):
-                        edge_index += 1
+        for _ in range(n_layers):
+            self.seq_layers.append(Mamba(
+                d_model=emb_size,
+                d_state=d_state,
+                d_conv=d_conv,
+                expand=expand,
+                layer_idx=None,
+            ))
+            if self.bidirect:
+                self.seq_backward_layers.append(Mamba(
+                    d_model=emb_size,
+                    d_state=d_state,
+                    d_conv=d_conv,
+                    expand=expand,
+                    layer_idx=None,
+            ))
+        
 
-                walk_node_index[walk_index][j + 1] = next_index
-                walk_edge_index[walk_index][j] = edge_index
+    def _init_model(self):
+        initializer = nn.init.xavier_uniform_
+        embedding_dict = nn.ParameterDict({
+            'user_emb': nn.Parameter(initializer(torch.empty(self.data.user_num, self.latent_size))),
+            'item_emb': nn.Parameter(initializer(torch.empty(self.data.item_num, self.latent_size))),
+        })
+        return embedding_dict
 
-                prev_index = node_index
-                node_index = next_index
+    def get_position_emb(self):
+        
+        inter_M = self.inter_matrix
+        u, s, v = svds(inter_M, k=self.latent_size)
+        user_pos = np.dot(u, np.diag(np.sqrt(s)))
+        item_pos = np.dot(np.diag(np.sqrt(s)),v)
+        item_pos = np.transpose(item_pos)
 
-                if window_size > 0:
-                    o = fmin(window_size, j + 1)
-                    for s in range(o):
-                        adj_prev_node_index = walk_node_index[walk_index][j - s]
-                        walk_node_id_encoding[walk_index][j + 1][window_size - 1 - s] = next_index == adj_prev_node_index
-                        if s > 0:
-                            for k in range(indptr[adj_prev_node_index], indptr[adj_prev_node_index + 1]):
-                                if indices[k] > next_index:
-                                    break
-                                if indices[k] == next_index:
-                                    walk_node_adj_encoding[walk_index][j + 1][window_size - 1 - s] = 1
-                                    break
-            walk_index += 1
+        user_pos = torch.from_numpy(user_pos)
+        item_pos = torch.from_numpy(item_pos)
+        pos_emb = torch.cat([user_pos, item_pos], dim=0)
 
-    if window_size > 0:
-        return np.asarray(walk_node_index), np.asarray(walk_edge_index), np.asarray(walk_node_id_encoding), np.asarray(walk_node_adj_encoding)
+        return pos_emb.cuda()
 
-    return np.asarray(walk_node_index), np.asarray(walk_edge_index)
+    def forward(self, walk_node):
+        ego_embeddings = torch.cat([self.embedding_dict['user_emb'], self.embedding_dict['item_emb']], 0)
+
+        if self.pos_enc:
+            ego_embeddings = ego_embeddings + self.pos_emb
+
+        nnode = ego_embeddings.shape[0]
+        
+        all_embeddings = [ego_embeddings]
+
+        
+        for i in range(self.layers):
+            x = ego_embeddings[walk_node]
+            x_forward = self.seq_layers[i](x)
+            if self.bidirect:
+                x_backward = self.seq_backward_layers[i](x.flip([1]))
+                x_backward = x_backward.flip([1])
+                x_forward = (x_forward + x_backward) * 0.5
+                del x_backward
+            x = x_forward
+            ego_embeddings = scatter_mean(x.reshape(-1, self.latent_size),
+                         walk_node.flatten(),
+                         dim=0,
+                         dim_size=nnode)
+            
+        if self.gcn:
+            ego_embeddings = torch.sparse.mm(self.sparse_norm_adj, ego_embeddings)
+            
+            
+        # all_embeddings = torch.stack(all_embeddings, dim=1)
+        # all_embeddings = torch.mean(all_embeddings, dim=1)
+        all_embeddings = ego_embeddings
+        user_all_embeddings = all_embeddings[:self.data.user_num]
+        item_all_embeddings = all_embeddings[self.data.user_num:]
+        return user_all_embeddings, item_all_embeddings
+
+
