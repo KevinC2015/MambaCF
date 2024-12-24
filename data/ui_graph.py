@@ -22,6 +22,7 @@ class Interaction(Data,Graph):
         self.user_num = len(self.training_set_u)
         self.item_num = len(self.training_set_i)
         self.ui_adj = self.__create_sparse_bipartite_adjacency()
+        self.ui_rat = self.__create_sparse_interaction_matrix()
         self.norm_adj = self.normalize_graph_mat(self.ui_adj)
         self.interaction_mat = self.__create_sparse_interaction_matrix()
         # popularity_user = {}
