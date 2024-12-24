@@ -22,9 +22,17 @@ python3 main.py --dataset=pinterest --trainset=./dataset/pinterest/train.txt --t
 
 ```
 ## Hyperparameter
+```
 choose
-dataset=[our 13 datasets.], then change the --trainset and --testset accordingly.
---
+--dataset=[our 13 datasets.], then change the --trainset and --testset accordingly.
+--bidirection = [False, True]
+--pos_enc= [False. True]
+--gcn= [False, True]
+--walk_length=[20,50,100,200, 500, 1000]
+--sample_rate=[0.01, 0.1, 0.2, 0.5] # large sample_rate will cause memory issue
+--test_walk_length=[100,200, 500, 1000]
+--test_sample_rate=[0.01, 0.1, 0.2, 0.5] 
+```
 
 
 
