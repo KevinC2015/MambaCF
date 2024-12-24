@@ -22,6 +22,7 @@ class Recommender(object):
         self.bidirection = self.config['bidirection']
         self.pos_enc = self.config['pos_enc']
         self.gcn = self.config['gcn']
+        self.m_layers = int(self.config['m_layers'])
 
         self.test_walk_length = int(self.config['test_walk_length'])
         self.test_sample_rate = float(self.config['test_sample_rate'])
