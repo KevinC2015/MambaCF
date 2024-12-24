@@ -16,6 +16,18 @@ class Recommender(object):
         self.batch_size = int(self.config['batch_size'])
         self.lRate = float(self.config['learnRate'])
         self.reg = float(self.config['reg.lambda'])
+
+        self.walk_length = int(self.config['walk_length'])
+        self.sample_rate = float(self.config['sample_rate'])
+        self.bidirection = self.config['bidirection']
+        self.pos_enc = self.config['pos_enc']
+
+        self.test_walk_length = int(self.config['test_walk_length'])
+        self.test_sample_rate = float(self.config['test_sample_rate'])
+
+        
+
+        
         self.output = OptionConf(self.config['output.setup'])
         current_time = strftime("%Y-%m-%d %H-%M-%S", localtime(time()))
         self.model_log = Log(self.model_name, self.model_name + ' ' + current_time)
