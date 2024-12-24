@@ -7,7 +7,7 @@ args = get_params()
 
 if __name__ == '__main__':
     # Register your model here
-    graph_baselines = ['LightGCN','DirectAU','MF']
+    graph_baselines = ['LightGCN','DirectAU','MF', 'MambaCF']
     ssl_graph_models = ['SGL', 'SimGCL', 'SEPT', 'MHCN', 'BUIR', 'SelfCF', 'SSL4Rec', 'XSimGCL', 'NCL','MixGCF']
     sequential_baselines= ['SASRec']
     ssl_sequential_models = ['CL4SRec','DuoRec','BERT4Rec']
