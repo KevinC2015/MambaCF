@@ -22,7 +22,7 @@ python3 main.py --dataset=pinterest --trainset=./dataset/pinterest/train.txt --t
 ## Hyperparameter
 ```
 choose
---dataset=[our 13 datasets.], then change the --trainset and --testset accordingly.
+--dataset=[our datasets.], [skip movielean dataset at this time]then change the --trainset and --testset accordingly.
 --bidirection = [False, True]
 --pos_enc= [False. True]
 --gcn= [False, True]
