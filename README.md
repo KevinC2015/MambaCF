@@ -26,10 +26,10 @@ choose
 --bidirection = [False, True]
 --pos_enc= [False. True]
 --gcn= [False, True]
---walk_length=[20,50,100,200, 500, 1000]
---sample_rate=[0.01, 0.1, 0.2, 0.5] # large sample_rate will cause memory issue
---test_walk_length=[100,200, 500, 1000]
---test_sample_rate=[0.01, 0.1, 0.2, 0.5] 
+--walk_length=[20,50,100, 500]
+--sample_rate=[0.05, 0.1, 0.2, 0.5] # large sample_rate will cause memory issue
+--test_walk_length=[100,200, 500]
+--test_sample_rate=[ 0.1, 0.2, 0.5] 
 ```
 
 
