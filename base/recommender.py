@@ -21,6 +21,7 @@ class Recommender(object):
         self.sample_rate = float(self.config['sample_rate'])
         self.bidirection = self.config['bidirection']
         self.pos_enc = self.config['pos_enc']
+        self.gcn = self.config['gcn']
 
         self.test_walk_length = int(self.config['test_walk_length'])
         self.test_sample_rate = float(self.config['test_sample_rate'])
