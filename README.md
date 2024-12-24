@@ -1,7 +1,4 @@
-# SimCE
 
-
-## Training with SimCE
 
 1. install the mamba-ssm: https://github.com/state-spaces/mamba
 
