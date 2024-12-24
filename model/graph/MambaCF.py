@@ -22,8 +22,8 @@ class MambaCF(GraphRecommender):
     def __init__(self, conf, training_set, test_set):
         super(MambaCF, self).__init__(conf, training_set, test_set)
         _args = OptionConf(self.config['MambaCF'])
-        # self.n_layers = int(_args['-n_layer'])
-        self.model = Mamba_encoder(self.data, self.emb_size, self.m_layers, self.bidirection, self.pos_enc, self.gcn)
+
+        self.model = Mamba_encoder(self.data, self.emb_size, args.m_layers, args.bidirection, args.pos_enc, args.gcn)
         if args.loss in ['ssm', 'simce']:
             self.maxEpoch = 50
 
@@ -33,7 +33,7 @@ class MambaCF(GraphRecommender):
         for epoch in range(self.maxEpoch):
             t0 = time.time()
 
-            walk_node, _ = get_random_walks(self.model.adj, self.walk_length, sample_rate=self.sample_rate)
+            walk_node, _ = get_random_walks(self.model.adj, args.walk_length, sample_rate=args.sample_rate)
             walk_node = torch.from_numpy(walk_node).cuda()
         
             for n, batch in enumerate(next_batch_pairwise(self.data, self.batch_size)):
@@ -75,7 +75,7 @@ class MambaCF(GraphRecommender):
         with torch.no_grad():
 
             # here is the evaluate
-            walk_node, _ = get_random_walks(self.model.adj, self.test_walk_length, sample_rate=self.test_sample_rate)
+            walk_node, _ = get_random_walks(self.model.adj, args.test_walk_length, sample_rate=args.test_sample_rate)
             walk_node = torch.from_numpy(walk_node).cuda()
 
 
@@ -99,7 +99,6 @@ class Mamba_encoder(nn.Module):
         super(Mamba_encoder, self).__init__()
         self.data = data
         self.latent_size = emb_size
-        self.layers = n_layers
         self.norm_adj = data.norm_adj    
         self.embedding_dict = self._init_model()
         self.sparse_norm_adj = TorchGraphInterface.convert_sparse_mat_to_tensor(self.norm_adj).cuda()
@@ -109,6 +108,7 @@ class Mamba_encoder(nn.Module):
         self.bidirect = bidirection
         self.pos_enc = pos_enc
         self.gcn=gcn
+        self.layers =n_layers
 
         if self.pos_enc:
             self.pos_emb = self.get_position_emb()
@@ -171,6 +171,7 @@ class Mamba_encoder(nn.Module):
 
         
         for i in range(self.layers):
+ 
             x = ego_embeddings[walk_node]
             x_forward = self.seq_layers[i](x)
             if self.bidirect:
